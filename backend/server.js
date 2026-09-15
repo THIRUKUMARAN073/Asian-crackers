@@ -1,84 +1,128 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import axios from 'axios';
 import FormData from 'form-data';
+import fetch from 'node-fetch';
 
 dotenv.config();
 
 const app = express();
-app.use(cors());
-app.use(express.json({ limit: '25mb' }));
 
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+app.use(cors());
+// Expand JSON payload limit to accept high-resolution base64 invoices
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+const PORT = process.env.PORT || 5000;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 
 app.post('/api/send-whatsapp-bill', async (req, res) => {
   try {
-    const { customerName, customerPhone, pdfBase64, fileName, grandTotal } = req.body;
+    const { customerName, customerPhone, pdfBase64, fileName, grandTotal, itemsListText } = req.body;
 
     if (!customerPhone || !pdfBase64) {
-      return res.status(400).json({ success: false, error: 'Missing phone number or PDF payload' });
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing recipient phone number or PDF payload.' 
+      });
     }
 
-    // Convert Base64 back to Binary Buffer
-    const pdfBuffer = Buffer.from(pdfBase64, 'base64');
+    if (!PHONE_NUMBER_ID || !WHATSAPP_TOKEN || WHATSAPP_TOKEN.includes('your_full_temporary_access_token')) {
+      return res.status(500).json({
+        success: false,
+        error: 'Invalid Meta credentials. Please check PHONE_NUMBER_ID and WHATSAPP_TOKEN in your backend .env file.'
+      });
+    }
 
-    // Upload PDF to Meta WhatsApp Media Endpoint
+    // Format phone: strip non-numeric characters, add country code 91 if missing
+    let cleanPhone = customerPhone.replace(/\D/g, '');
+    if (cleanPhone.length === 10) {
+      cleanPhone = `91${cleanPhone}`;
+    }
+
+    // STEP 1: Upload PDF buffer to Meta WhatsApp Media Endpoint
+    const pdfBuffer = Buffer.from(pdfBase64, 'base64');
     const form = new FormData();
     form.append('file', pdfBuffer, {
-      filename: fileName || 'Invoice.pdf',
-      contentType: 'application/pdf'
+      filename: fileName || 'Asian_Crackers_Invoice.pdf',
+      contentType: 'application/pdf',
     });
     form.append('type', 'application/pdf');
     form.append('messaging_product', 'whatsapp');
 
-    const mediaUploadRes = await axios.post(
+    const mediaUploadRes = await fetch(
       `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/media`,
-      form,
       {
+        method: 'POST',
         headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
           ...form.getHeaders(),
-          Authorization: `Bearer ${WHATSAPP_TOKEN}`
-        }
+        },
+        body: form,
       }
     );
 
-    const mediaId = mediaUploadRes.data.id;
+    const mediaData = await mediaUploadRes.json();
 
-    // Dispatch WhatsApp Document Message
+    if (!mediaUploadRes.ok || !mediaData.id) {
+      console.error('Meta Media API Error:', mediaData);
+      return res.status(500).json({
+        success: false,
+        error: mediaData.error?.message || 'Meta Media API failed to upload invoice buffer.'
+      });
+    }
+
+    const mediaId = mediaData.id;
+
+    // STEP 2: Send WhatsApp Document Message with Caption
     const messagePayload = {
-      messaging_product: "whatsapp",
-      recipient_type: "individual",
-      to: customerPhone,
-      type: "document",
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: cleanPhone,
+      type: 'document',
       document: {
         id: mediaId,
-        caption: `வணக்கம் ${customerName}!\n\nநன்றி! உங்கள் Asian Crackers ஆர்டர் வெற்றிகரமாக பதிவு செய்யப்பட்டது.\nமொத்தத் தொகை: Rs. ${grandTotal}\n\nஉங்கள் பில் (Invoice PDF) இணைக்கப்பட்டுள்ளது. பார்சல் புக்கிங் விவரங்களை விரைவில் அனுப்புவோம்!`,
-        filename: fileName || "Asian_Crackers_Bill.pdf"
+        caption: `வணக்கம் ${customerName}!\nHere is your official wholesale bill from Asian Crackers, Sivakasi.\nTotal: ₹${grandTotal}.\nThank you for celebrating with us!`,
+        filename: fileName || 'Asian_Crackers_Invoice.pdf'
       }
     };
 
-    await axios.post(
+    const sendRes = await fetch(
       `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`,
-      messagePayload,
       {
+        method: 'POST',
         headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${WHATSAPP_TOKEN}`
-        }
+        },
+        body: JSON.stringify(messagePayload),
       }
     );
 
-    return res.status(200).json({ success: true, message: 'PDF sent to WhatsApp successfully' });
-  } catch (error) {
-    console.error('Meta API Error:', error.response?.data || error.message);
-    return res.status(500).json({
-      success: false,
-      error: error.response?.data?.error?.message || error.message
+    const sendData = await sendRes.json();
+
+    if (!sendRes.ok) {
+      console.error('Meta Message Dispatch Error:', sendData);
+      return res.status(500).json({
+        success: false,
+        error: sendData.error?.message || 'WhatsApp message dispatch rejected by Meta.'
+      });
+    }
+
+    return res.json({ 
+      success: true, 
+      messageId: sendData.messages?.[0]?.id 
+    });
+  } catch (err) {
+    console.error('Backend Server Error:', err);
+    return res.status(500).json({ 
+      success: false, 
+      error: err.message || 'Internal server error processing bill.' 
     });
   }
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Asian Crackers WhatsApp API Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`WhatsApp Dispatch Server running on port ${PORT}`);
+});

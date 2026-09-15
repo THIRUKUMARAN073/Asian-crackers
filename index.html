@@ -157,7 +157,7 @@
               <a href="https://wa.me/919345999862?text=Hello%20Asian%20Crackers,%20I%20have%20an%20inquiry%20regarding%20wholesale%20crackers." target="_blank" class="text-xs font-extrabold text-emerald-600 block hover:underline">
                 Chat with Depot directly (+91 93459 99862)
               </a>
-              <span class="text-[11px] text-slate-400">PDF Invoices are dispatched to your WhatsApp instantly</span>
+              <span class="text-[11px] text-slate-400">Bills are delivered directly to your WhatsApp</span>
             </div>
           </div>
 
@@ -362,7 +362,7 @@
           <div class="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-3">
             <span class="text-xl">📲</span>
             <div class="text-[11px] text-emerald-800">
-              <strong class="font-bold">Automated WhatsApp Billing:</strong> We will send your official bill PDF and confirmation message to your WhatsApp right upon submission.
+              <strong class="font-bold">Instant Order Dispatch:</strong> Your official wholesale bill PDF will be saved to your device, and dispatched directly through WhatsApp.
             </div>
           </div>
 
@@ -549,7 +549,7 @@
           { id: "76", name: "3 1/2\" PIPE NAYAGARA", tamil: "3.5 பைப் நயகரா", price: 368.00, per: "1 BOX", tags: ["sky"], img: "images/pipe_nayagara.jpeg" },
           { id: "77", name: "4\" PIPE FANCY", tamil: "4 பைப் பென்ஸி", price: 440.00, per: "1 BOX", tags: ["sky"], img: "images/4_pipe_fancy.jpeg" },
           { id: "78", name: "5\" PIPE FANCY", tamil: "5 பைப் பென்ஸி", price: 596.00, per: "1 BOX", tags: ["sky"], img: "images/5_pipe_fancy.jpeg" },
-          { id: "79", name: "7 SHOT (5 Pcs)", tamil: "7 ஷாட் 5 பீஸ்", price: 125.00, per: "1 BOX", tags: ["sky"], img: "images/7_shot_fancy.jpeg" }
+          { id: "79", name: "7 SHOT (5 Pcs)", tamil: "7 SHOT 5 பீஸ்", price: 125.00, per: "1 BOX", tags: ["sky"], img: "images/7_shot_fancy.jpeg" }
         ]
       },
       {
@@ -640,7 +640,7 @@
       }
     ];
 
-    // Read edited prices from localStorage or fallback to defaults
+    // Read synced modifications from admin dashboard if present
     const CATALOG = JSON.parse(localStorage.getItem("asian_crackers_catalog")) || DEFAULT_CATALOG;
 
     let cart = { "1": 1, "7": 2, "16": 2, "30": 1, "47": 5 };
@@ -909,7 +909,7 @@
       const originalBtnText = submitBtn.innerHTML;
 
       submitBtn.disabled = true;
-      submitBtn.innerHTML = `⏳ Sending PDF to WhatsApp...`;
+      submitBtn.innerHTML = `⏳ Generating PDF & Dispatched to WhatsApp...`;
 
       const name = document.getElementById("c-name").value.trim();
       const phone = document.getElementById("c-phone").value.trim();
@@ -922,19 +922,28 @@
       const allItems = CATALOG.flatMap(c => c.items);
       const invoiceData = [];
       let grandTotal = 0;
-      let waMessage = `*NEW ORDER - ASIAN CRACKERS 2026*\n*Customer:* ${name}\n*Phone:* ${phone}\n*WhatsApp:* ${targetWhatsApp}\n*City:* ${city}\n*Delivery Depot:* ${addr}\n\n*Product Breakdown:*\n`;
+      let waMessage = `*NEW WHOLESALE ORDER - ASIAN CRACKERS (SIVAKASI)*\n` +
+                      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                      `👤 *Customer:* ${name}\n` +
+                      `📞 *Phone:* ${phone}\n` +
+                      `🏢 *City:* ${city}\n` +
+                      `📍 *Transport/Depot:* ${addr}\n` +
+                      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                      `*ORDERED ITEMS:*\n`;
 
       Object.entries(cart).forEach(([id, qty], idx) => {
         const item = allItems.find(p => p.id === id);
         const sub = Math.round(item.price * qty);
         grandTotal += sub;
         invoiceData.push([idx + 1, `${item.name} (${item.tamil})`, `Rs. ${item.price.toFixed(2)}`, `${qty} ${item.per}`, `Rs. ${sub}`]);
-        waMessage += `${idx + 1}. ${item.name} (${item.tamil}) x ${qty} = Rs. ${sub}\n`;
+        waMessage += `${idx + 1}. ${item.name} (${item.tamil}) - ${qty} ${item.per} = Rs. ${sub}\n`;
       });
 
-      waMessage += `\n*Grand Total: Rs. ${grandTotal}*`;
+      waMessage += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                   `💰 *GRAND TOTAL: Rs. ${grandTotal}*\n` +
+                   `⚡ Please confirm parcel dispatch availability.`;
 
-      // Generate Client-side PDF
+      // 1. Generate Client-side PDF Invoice
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF();
 
@@ -964,8 +973,9 @@
       const fileName = `Asian_Crackers_Invoice_${name.replace(/\s+/g, "_")}.pdf`;
       doc.save(fileName);
 
-      // Extract Base64 and send to Backend API
+      // 2. Extract Base64 PDF and attempt Cloud API dispatch
       const pdfBase64 = doc.output('datauristring').split(',')[1];
+      let apiSuccess = false;
 
       try {
         const response = await fetch(BACKEND_API_URL, {
@@ -973,23 +983,28 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             customerName: name,
-            customerPhone: targetWhatsApp.startsWith("91") ? targetWhatsApp : `91${targetWhatsApp}`,
+            customerPhone: targetWhatsApp,
             pdfBase64: pdfBase64,
             fileName: fileName,
-            grandTotal: grandTotal
+            grandTotal: grandTotal,
+            itemsListText: waMessage
           })
         });
 
         const result = await response.json();
         if (result.success) {
+          apiSuccess = true;
           alert(`🎉 நன்றி! உங்கள் பில் PDF வாட்ஸ்அப் எண்ணிற்கு (+91 ${targetWhatsApp}) நேரடியாக அனுப்பப்பட்டது.`);
         } else {
-          alert("Order recorded & PDF downloaded! (API dispatch notice: " + result.error + ")");
+          console.warn("Meta API returned error:", result.error);
         }
       } catch (err) {
-        console.warn("Backend API offline or unreachable:", err);
+        console.warn("Backend server not reachable:", err);
       } finally {
-        window.open(`https://wa.me/${WHATSAPP_DEPOT}?text=${encodeURIComponent(waMessage)}`, "_blank");
+        // 3. Fallback: Always open WhatsApp Chat with the depot and customer order list
+        if (!apiSuccess) {
+          window.open(`https://wa.me/${WHATSAPP_DEPOT}?text=${encodeURIComponent(waMessage)}`, "_blank");
+        }
         submitBtn.disabled = false;
         submitBtn.innerHTML = originalBtnText;
         closeOrderModal();
