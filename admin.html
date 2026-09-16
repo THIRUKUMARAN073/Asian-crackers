@@ -236,8 +236,8 @@
       const user = document.getElementById("login-user").value.trim();
       const pass = document.getElementById("login-pass").value;
       const errorEl = document.getElementById("login-error");
-      const submitBtn = e.target.querySelector("button[type="submit"]");
-      const originalText = submitBtn.innerText;
+      const submitBtn = e.target.querySelector("button[type='submit']");
+      const originalText = submitBtn ? submitBtn.innerText : "Login";
 
       submitBtn.disabled = true;
       submitBtn.innerText = "Verifying Credentials...";
