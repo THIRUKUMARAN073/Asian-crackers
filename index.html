@@ -392,7 +392,14 @@
   <script>
     const MINIMUM_ORDER = 2000;
     const WHATSAPP_DEPOT = "919345999862";
-    const BACKEND_API_URL = "http://localhost:5000/api/send-whatsapp-bill";
+
+    // Dynamic backend URL matching admin.html logic
+    const API_BASE_URL = new URLSearchParams(window.location.search).get("api") || (
+      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+        ? (window.location.port === "5000" ? "http://localhost:5000" : "http://localhost:5001")
+        : "https://asian-crackers-api.onrender.com"
+    );
+    const BACKEND_API_URL = `${API_BASE_URL}/api/send-whatsapp-bill`;
 
     const DEFAULT_CATALOG = [
       {
@@ -640,12 +647,27 @@
       }
     ];
 
-    // Read synced modifications from admin dashboard if present
-    const CATALOG = JSON.parse(localStorage.getItem("asian_crackers_catalog")) || DEFAULT_CATALOG;
-
-    // Start with an empty cart or restore actual user cart from localStorage
+    // Live catalog loaded from PostgreSQL API, defaults until loaded
+    let CATALOG = DEFAULT_CATALOG;
     let cart = JSON.parse(localStorage.getItem("asian_crackers_cart")) || {};
     let currentSearch = "";
+
+    // Fetch products dynamically from PostgreSQL database
+    async function fetchLiveCatalog() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/products`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            CATALOG = data;
+            renderCatalog();
+            syncState();
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load catalog from server, using local fallback:", err);
+      }
+    }
 
     function handleSearch(val) {
       currentSearch = val.toLowerCase();
@@ -680,9 +702,9 @@
 
       let eligibleItems = allItems;
       if (vibe === "kids") {
-        eligibleItems = allItems.filter(i => i.tags.includes("kids") || i.tags.includes("colour") || i.price < 50);
+        eligibleItems = allItems.filter(i => (i.tags && (i.tags.includes("kids") || i.tags.includes("colour"))) || i.price < 50);
       } else if (vibe === "loud") {
-        eligibleItems = allItems.filter(i => i.tags.includes("sound") || i.tags.includes("loud") || i.tags.includes("repeaters"));
+        eligibleItems = allItems.filter(i => i.tags && (i.tags.includes("sound") || i.tags.includes("loud") || i.tags.includes("repeaters")));
       }
 
       let passes = 0;
@@ -711,8 +733,9 @@
         const filtered = cat.items.filter(item => {
           const matchName = item.name.toLowerCase().includes(currentSearch);
           const matchTamil = item.tamil.toLowerCase().includes(currentSearch);
+          const matchId = String(item.id).includes(currentSearch);
           const matchTag = item.tags && item.tags.some(t => t.includes(currentSearch));
-          return matchName || matchTamil || matchTag;
+          return matchName || matchTamil || matchId || matchTag;
         });
 
         if (filtered.length === 0) return;
@@ -767,7 +790,7 @@
                     </div>
                     <h4 class="font-bold text-xs text-slate-900 line-clamp-1">${item.name}</h4>
                     <p class="text-[11px] font-medium text-amber-800 line-clamp-1 mt-0.5">${item.tamil}</p>
-                    <p class="font-black text-slate-900 text-sm mt-1.5">₹${item.price.toFixed(2)}</p>
+                    <p class="font-black text-slate-900 text-sm mt-1.5">₹${Number(item.price).toFixed(2)}</p>
                   </div>
                   <div class="mt-3">
                     ${q === 0 ? `
@@ -796,14 +819,13 @@
       let totalCount = 0;
       let totalAmount = 0;
 
-      // Persist cart to localStorage on every state change
       localStorage.setItem("asian_crackers_cart", JSON.stringify(cart));
 
       const drawerList = document.getElementById("drawer-items-list");
       drawerList.innerHTML = "";
 
       Object.entries(cart).forEach(([id, qty]) => {
-        const item = allItems.find(p => p.id === id);
+        const item = allItems.find(p => String(p.id) === String(id));
         if (!item) return;
         totalCount += qty;
         totalAmount += item.price * qty;
@@ -820,7 +842,7 @@
           <div class="flex-1 min-w-0">
             <h5 class="font-black text-xs text-slate-900 truncate">${item.name}</h5>
             <span class="text-[10px] text-amber-700 block truncate">${item.tamil} • ${item.per}</span>
-            <span class="text-xs text-slate-400 font-medium">₹${item.price.toFixed(2)} × ${qty} = <b class="text-slate-800">₹${Math.round(item.price * qty)}</b></span>
+            <span class="text-xs text-slate-400 font-medium">₹${Number(item.price).toFixed(2)} × ${qty} = <b class="text-slate-800">₹${Math.round(item.price * qty)}</b></span>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             <div class="flex items-center border border-slate-200 rounded-lg overflow-hidden text-xs">
@@ -885,7 +907,8 @@
 
       summaryContainer.innerHTML = "";
       Object.entries(cart).forEach(([id, qty]) => {
-        const item = allItems.find(p => p.id === id);
+        const item = allItems.find(p => String(p.id) === String(id));
+        if (!item) return;
         const sub = Math.round(item.price * qty);
         grandTotal += sub;
         summaryContainer.innerHTML += `
@@ -936,10 +959,11 @@
                       `*ORDERED ITEMS:*\n`;
 
       Object.entries(cart).forEach(([id, qty], idx) => {
-        const item = allItems.find(p => p.id === id);
+        const item = allItems.find(p => String(p.id) === String(id));
+        if (!item) return;
         const sub = Math.round(item.price * qty);
         grandTotal += sub;
-        invoiceData.push([idx + 1, `${item.name} (${item.tamil})`, `Rs. ${item.price.toFixed(2)}`, `${qty} ${item.per}`, `Rs. ${sub}`]);
+        invoiceData.push([idx + 1, `${item.name} (${item.tamil})`, `Rs. ${Number(item.price).toFixed(2)}`, `${qty} ${item.per}`, `Rs. ${sub}`]);
         waMessage += `${idx + 1}. ${item.name} (${item.tamil}) - ${qty} ${item.per} = Rs. ${sub}\n`;
       });
 
@@ -947,7 +971,7 @@
                    `💰 *GRAND TOTAL: Rs. ${grandTotal}*\n` +
                    `⚡ Please confirm parcel dispatch availability.`;
 
-      // 1. Generate Client-side PDF Invoice
+      // Generate Client-side PDF Invoice
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF();
 
@@ -977,7 +1001,6 @@
       const fileName = `Asian_Crackers_Invoice_${name.replace(/\s+/g, "_")}.pdf`;
       doc.save(fileName);
 
-      // 2. Extract Base64 PDF and attempt Cloud API dispatch
       const pdfBase64 = doc.output('datauristring').split(',')[1];
       let apiSuccess = false;
 
@@ -1005,12 +1028,10 @@
       } catch (err) {
         console.warn("Backend server not reachable:", err);
       } finally {
-        // Fallback: Open WhatsApp Chat with the depot and customer order list
         if (!apiSuccess) {
           window.open(`https://wa.me/${WHATSAPP_DEPOT}?text=${encodeURIComponent(waMessage)}`, "_blank");
         }
 
-        // Reset and clear cart upon order completion
         cart = {};
         localStorage.removeItem("asian_crackers_cart");
         syncState();
@@ -1022,8 +1043,10 @@
       }
     }
 
+    // Initial render using local data, then immediately load live database records
     renderCatalog();
     syncState();
+    fetchLiveCatalog();
   </script>
 </body>
 </html>
